@@ -18,7 +18,7 @@ parameters:
   - name: awsRegion
     displayName: "AWS region"
     type: string
-    default: eu-west-2
+    default: us-west-2
 
   - name: awsServiceConnection
     displayName: "ADO AWS service connection name"
