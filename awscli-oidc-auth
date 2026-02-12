@@ -1,13 +1,14 @@
-trigger:
-- main
-
-pool:
-  vmImage: ubuntu-latest
-
 steps:
-- task: AWSCLI@1
+- task: TerraformCLI@1
   inputs:
+    command: 'init'
+    workingDirectory: './infra'
+    backendType: 's3'
+    awsCredentials: 'arn:aws:iam::211125325120:oidc-provider/vstoken.dev.azure.com/94bb5944-9b16-4724-8722-de7ba0c52f55'
+
+- task: TerraformCLI@1
+  inputs:
+    command: 'apply'
+    workingDirectory: './infra'
     awsCredentials: '<SERVICE_CONNECTION_NAME>'
-    regionName: 'us-west-2'
-    command: 's3'
-    arguments: 'ls'
+    allowTelemetryCollection: false
