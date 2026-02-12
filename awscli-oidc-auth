@@ -10,5 +10,5 @@ steps:
   inputs:
     command: 'apply'
     workingDirectory: './infra'
-    awsCredentials: '<SERVICE_CONNECTION_NAME>'
+    awsCredentials: 'arn:aws:iam::211125325120:oidc-provider/vstoken.dev.azure.com/94bb5944-9b16-4724-8722-de7ba0c52f55'
     allowTelemetryCollection: false
