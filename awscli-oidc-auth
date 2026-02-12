@@ -1,0 +1,13 @@
+trigger:
+- main
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+- task: AWSCLI@1
+  inputs:
+    awsCredentials: '<SERVICE_CONNECTION_NAME>'
+    regionName: 'us-west-2'
+    command: 's3'
+    arguments: 'ls'
