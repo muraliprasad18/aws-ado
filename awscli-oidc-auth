@@ -12,3 +12,7 @@ steps:
     workingDirectory: './infra'
     awsCredentials: 'arn:aws:iam::211125325120:oidc-provider/vstoken.dev.azure.com/94bb5944-9b16-4724-8722-de7ba0c52f55'
     allowTelemetryCollection: false
+
+- script: |
+    aws sts get-caller-identity
+  displayName: "Verify AWS Identity"
