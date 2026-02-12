@@ -1,0 +1,176 @@
+# Single Azure DevOps pipeline for ADO → AWS via OIDC
+# Modes:
+#   - verify   : runs sts get-caller-identity using your AWS service connection
+#   - terraform: runs 3-stage Terraform pipeline (validate -> plan -> apply)
+#
+# Toggle gated Apply via:
+#   useEnvironment: true  (requires an existing ADO Environment; recommended for approvals)
+#   useEnvironment: false (no approvals; Apply runs immediately)
+
+# ----------------------------
+# Parameters (change defaults)
+# ----------------------------
+parameters:
+  - name: mode
+    displayName: "Run mode"
+    type: string
+    default: terraform
+    values: [ verify, terraform ]
+
+  - name: awsRegion
+    displayName: "AWS region"
+    type: string
+    default: us-west-2
+
+  - name: awsServiceConnection
+    displayName: "ADO AWS service connection name"
+    type: string
+    default: aws-oidc
+
+  - name: useEnvironment
+    displayName: "Gate Apply with an ADO Environment?"
+    type: boolean
+    default: false
+
+  - name: applyEnvironment
+    displayName: "Environment name (used only when useEnvironment=true)"
+    type: string
+    default: prod-aws
+
+# -------------
+# Global config
+# -------------
+trigger:
+- main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  AWS_REGION: ${{ parameters.awsRegion }}
+  AWS_SC_NAME: ${{ parameters.awsServiceConnection }}
+
+# ----------------
+# Verify (STS) job
+# ----------------
+# Runs only when mode == verify
+stages:
+- stage: Verify
+  displayName: "Verify OIDC → AWS STS"
+  condition: eq('${{ parameters.mode }}', 'verify')
+  jobs:
+  - job: VerifySTS
+    displayName: "Get caller identity with AWSCLI@1"
+    steps:
+    - task: AWSCLI@1
+      displayName: "aws sts get-caller-identity"
+      inputs:
+        awsCredentials: '$(AWS_SC_NAME)'
+        regionName: '$(AWS_REGION)'
+        awsCommand: 'sts'
+        awsSubCommand: 'get-caller-identity'
+
+# ---------------------------------------
+# Terraform (Validate → Plan → Apply)
+# ---------------------------------------
+# Runs only when mode == terraform
+- stage: Validate
+  displayName: "Terraform Validate"
+  condition: eq('${{ parameters.mode }}', 'terraform')
+  jobs:
+  - job: Validate
+    displayName: "terraform init & validate"
+    steps:
+    - task: AWSShellScript@1
+      displayName: "terraform init & validate (aws/)"
+      inputs:
+        awsCredentials: '$(AWS_SC_NAME)'
+        regionName: '$(AWS_REGION)'
+        scriptType: 'inline'
+        inlineScript: |
+          set -e
+          cd aws
+          terraform init -input=false
+          terraform validate
+
+- stage: Plan
+  displayName: "Terraform Plan"
+  dependsOn: Validate
+  condition: and(eq('${{ parameters.mode }}', 'terraform'), succeeded())
+  jobs:
+  - job: Plan
+    displayName: "terraform plan"
+    steps:
+    - task: AWSShellScript@1
+      displayName: "terraform plan (aws/)"
+      inputs:
+        awsCredentials: '$(AWS_SC_NAME)'
+        regionName: '$(AWS_REGION)'
+        scriptType: 'inline'
+        inlineScript: |
+          set -e
+          cd aws
+          terraform init -input=false
+          terraform plan -input=false -out=tfplan
+    - publish: $(System.DefaultWorkingDirectory)/aws
+      artifact: tfplan
+
+# -------------------------
+# Apply (2 variants below)
+# -------------------------
+
+# A) Gated Apply using an Environment (runs only if useEnvironment == true)
+- stage: Apply_Gated
+  displayName: "Terraform Apply (gated via Environment)"
+  dependsOn: Plan
+  condition: and(
+              eq('${{ parameters.mode }}', 'terraform'),
+              succeeded(),
+              eq('${{ parameters.useEnvironment }}', true)
+            )
+  jobs:
+  - deployment: Apply
+    displayName: "terraform apply (gated)"
+    environment: ${{ parameters.applyEnvironment }}   # must exist in ADO
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: tfplan
+          - task: AWSShellScript@1
+            displayName: "terraform apply (aws/)"
+            inputs:
+              awsCredentials: '$(AWS_SC_NAME)'
+              regionName: '$(AWS_REGION)'
+              scriptType: 'inline'
+              inlineScript: |
+                set -e
+                cd $(System.DefaultWorkingDirectory)/aws || true
+                terraform apply -input=false -auto-approve tfplan
+
+# B) Ungated Apply without Environment (runs only if useEnvironment == false)
+- stage: Apply
+  displayName: "Terraform Apply (no environment)"
+  dependsOn: Plan
+  condition: and(
+              eq('${{ parameters.mode }}', 'terraform'),
+              succeeded(),
+              eq('${{ parameters.useEnvironment }}', false)
+            )
+  jobs:
+  - job: Apply_NoEnv
+    displayName: "terraform apply (no environment)"
+    steps:
+    - download: current
+      artifact: tfplan
+    - task: AWSShellScript@1
+      displayName: "terraform apply (aws/)"
+      inputs:
+        awsCredentials: '$(AWS_SC_NAME)'
+        regionName: '$(AWS_REGION)'
+        scriptType: 'inline'
+        inlineScript: |
+          set -e
+          cd $(System.DefaultWorkingDirectory)/aws || true
+          terraform apply -input=false -auto-approve tfplan
